@@ -118,7 +118,7 @@ module.exports = {
       1: 0x00,
       2: 0x00,
       3: 0x5ba81b19,
-      4: 0xc8e71055
+      4: 0x4dec4df0
     },
     coin: coins.ZEC,
     hashFunctions: hashFunctions
@@ -136,7 +136,7 @@ module.exports = {
       1: 0x00,
       2: 0x00,
       3: 0x5ba81b19,
-      4: 0xc8e71055
+      4: 0x4dec4df0
     },
     coin: coins.ZEC,
     hashFunctions: hashFunctions

@@ -32,6 +32,8 @@ function Transaction (network = networks.bitcoin) {
   this.ins = []
   this.outs = []
   this.network = network
+  // lazily populated cache for BIP143/ZIP243 intermediate hashes, see getPrevoutHash
+  this.__sighashCache = null
   if (coins.isZcash(network)) {
     // ZCash version >= 2
     this.joinsplits = []
@@ -387,6 +389,8 @@ Transaction.prototype.addInput = function (hash, index, sequence, scriptSig) {
     sequence = Transaction.DEFAULT_SEQUENCE
   }
 
+  this.invalidateHashCache()
+
   // Add the input and return the input's index
   return (this.ins.push({
     hash: hash,
@@ -399,6 +403,8 @@ Transaction.prototype.addInput = function (hash, index, sequence, scriptSig) {
 
 Transaction.prototype.addOutput = function (scriptPubKey, value) {
   typeforce(types.tuple(types.Buffer, types.Satoshi), arguments)
+
+  this.invalidateHashCache()
 
   // Add the output and return the output's index
   return (this.outs.push({
@@ -698,29 +704,52 @@ Transaction.prototype.getBlake2bHash = function (bufferToHash, personalization) 
 }
 
 /**
+ * Invalidate the cached BIP143/ZIP243 intermediate hashes (hashPrevouts,
+ * hashSequence, hashOutputs). Called automatically by addInput/addOutput.
+ * Code that mutates ins/outs fields directly must call this afterwards.
+ */
+Transaction.prototype.invalidateHashCache = function () {
+  this.__sighashCache = null
+}
+
+/**
  * Build a hash for all or none of the transaction inputs depending on the hashtype
+ *
+ * The digest commits to all input outpoints, so it is a constant of the
+ * transaction for a given hashType and is cached after the first call
+ * (recomputing it for every input made signing O(n^2) in the input count).
  * @param hashType
  * @returns double SHA-256, 256-bit BLAKE2b hash or 256-bit zero if doesn't apply
  */
 Transaction.prototype.getPrevoutHash = function (hashType) {
   if (!(hashType & Transaction.SIGHASH_ANYONECANPAY)) {
-    var bufferWriter = new BufferWriter(36 * this.ins.length)
+    var cache = this.__sighashCache = this.__sighashCache || {}
+    var cacheKey = 'prevouts:' + hashType
+    if (!cache[cacheKey]) {
+      var bufferWriter = new BufferWriter(36 * this.ins.length)
 
-    this.ins.forEach(function (txIn) {
-      bufferWriter.writeSlice(txIn.hash)
-      bufferWriter.writeUInt32(txIn.index)
-    })
+      this.ins.forEach(function (txIn) {
+        bufferWriter.writeSlice(txIn.hash)
+        bufferWriter.writeUInt32(txIn.index)
+      })
 
-    if (coins.isZcash(this.network)) {
-      return this.getBlake2bHash(bufferWriter.getBuffer(), 'ZcashPrevoutHash')
+      if (coins.isZcash(this.network)) {
+        cache[cacheKey] = this.getBlake2bHash(bufferWriter.getBuffer(), 'ZcashPrevoutHash')
+      } else {
+        cache[cacheKey] = this.network.hashFunctions.transaction(bufferWriter.getBuffer())
+      }
     }
-    return this.network.hashFunctions.transaction(bufferWriter.getBuffer())
+    // return a copy so callers keep owning the returned buffer
+    return Buffer.from(cache[cacheKey])
   }
   return ZERO
 }
 
 /**
  * Build a hash for all or none of the transactions inputs sequence numbers depending on the hashtype
+ *
+ * The digest commits to all input sequence numbers, so it is a constant of
+ * the transaction for a given hashType and is cached after the first call.
  * @param hashType
  * @returns double SHA-256, 256-bit BLAKE2b hash or 256-bit zero if doesn't apply
  */
@@ -728,22 +757,34 @@ Transaction.prototype.getSequenceHash = function (hashType) {
   if (!(hashType & Transaction.SIGHASH_ANYONECANPAY) &&
     (hashType & 0x1f) !== Transaction.SIGHASH_SINGLE &&
     (hashType & 0x1f) !== Transaction.SIGHASH_NONE) {
-    var bufferWriter = new BufferWriter(4 * this.ins.length)
+    var cache = this.__sighashCache = this.__sighashCache || {}
+    var cacheKey = 'sequence:' + hashType
+    if (!cache[cacheKey]) {
+      var bufferWriter = new BufferWriter(4 * this.ins.length)
 
-    this.ins.forEach(function (txIn) {
-      bufferWriter.writeUInt32(txIn.sequence)
-    })
+      this.ins.forEach(function (txIn) {
+        bufferWriter.writeUInt32(txIn.sequence)
+      })
 
-    if (coins.isZcash(this.network)) {
-      return this.getBlake2bHash(bufferWriter.getBuffer(), 'ZcashSequencHash')
+      if (coins.isZcash(this.network)) {
+        cache[cacheKey] = this.getBlake2bHash(bufferWriter.getBuffer(), 'ZcashSequencHash')
+      } else {
+        cache[cacheKey] = this.network.hashFunctions.transaction(bufferWriter.getBuffer())
+      }
     }
-    return this.network.hashFunctions.transaction(bufferWriter.getBuffer())
+    // return a copy so callers keep owning the returned buffer
+    return Buffer.from(cache[cacheKey])
   }
   return ZERO
 }
 
 /**
  * Build a hash for one, all or none of the transaction outputs depending on the hashtype
+ *
+ * For hashtypes other than SIGHASH_SINGLE the digest commits to all outputs
+ * and is independent of inIndex, so it is a constant of the transaction for
+ * a given hashType and is cached after the first call. The SIGHASH_SINGLE
+ * digest depends on inIndex and is never cached.
  * @param hashType
  * @param inIndex
  * @returns double SHA-256, 256-bit BLAKE2b hash or 256-bit zero if doesn't apply
@@ -751,22 +792,29 @@ Transaction.prototype.getSequenceHash = function (hashType) {
 Transaction.prototype.getOutputsHash = function (hashType, inIndex) {
   var bufferWriter
   if ((hashType & 0x1f) !== Transaction.SIGHASH_SINGLE && (hashType & 0x1f) !== Transaction.SIGHASH_NONE) {
-    // Find out the size of the outputs and write them
-    var txOutsSize = this.outs.reduce(function (sum, output) {
-      return sum + 8 + varSliceSize(output.script)
-    }, 0)
+    var cache = this.__sighashCache = this.__sighashCache || {}
+    var cacheKey = 'outputs:' + hashType
+    if (!cache[cacheKey]) {
+      // Find out the size of the outputs and write them
+      var txOutsSize = this.outs.reduce(function (sum, output) {
+        return sum + 8 + varSliceSize(output.script)
+      }, 0)
 
-    bufferWriter = new BufferWriter(txOutsSize)
+      bufferWriter = new BufferWriter(txOutsSize)
 
-    this.outs.forEach(function (out) {
-      bufferWriter.writeUInt64(out.value)
-      bufferWriter.writeVarSlice(out.script)
-    })
+      this.outs.forEach(function (out) {
+        bufferWriter.writeUInt64(out.value)
+        bufferWriter.writeVarSlice(out.script)
+      })
 
-    if (coins.isZcash(this.network)) {
-      return this.getBlake2bHash(bufferWriter.getBuffer(), 'ZcashOutputsHash')
+      if (coins.isZcash(this.network)) {
+        cache[cacheKey] = this.getBlake2bHash(bufferWriter.getBuffer(), 'ZcashOutputsHash')
+      } else {
+        cache[cacheKey] = this.network.hashFunctions.transaction(bufferWriter.getBuffer())
+      }
     }
-    return this.network.hashFunctions.transaction(bufferWriter.getBuffer())
+    // return a copy so callers keep owning the returned buffer
+    return Buffer.from(cache[cacheKey])
   } else if ((hashType & 0x1f) === Transaction.SIGHASH_SINGLE && inIndex < this.outs.length) {
     // Write only the output specified in inIndex
     var output = this.outs[inIndex]

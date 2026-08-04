@@ -1,6 +1,6 @@
 {
   "name": "@runonflux/utxo-lib",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Client-side Bitcoin JavaScript library",
   "main": "./src/index.js",
   "engines": {

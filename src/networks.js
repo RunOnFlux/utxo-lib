@@ -118,7 +118,10 @@ module.exports = {
       1: 0x00,
       2: 0x00,
       3: 0x5ba81b19,
-      4: 0x5437f330
+      // NU6.3 — activated on mainnet at block 3,428,143 (28 July 2026).
+      // Transactions signed with the previous NU6.2 id (0x5437f330) are
+      // rejected by the network since activation.
+      4: 0x37a5165b
     },
     coin: coins.ZEC,
     hashFunctions: hashFunctions
@@ -136,7 +139,8 @@ module.exports = {
       1: 0x00,
       2: 0x00,
       3: 0x5ba81b19,
-      4: 0x5437f330
+      // NU6.3 (testnet activates network upgrades ahead of mainnet)
+      4: 0x37a5165b
     },
     coin: coins.ZEC,
     hashFunctions: hashFunctions

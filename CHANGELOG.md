@@ -1,3 +1,30 @@
+# @runonflux/utxo-lib 1.0.6
+__security__ (SSP security review 2026-10)
+- `TransactionBuilder.sign` enforces `witnessScript` consistency exactly like
+  `redeemScript`: if the input already carries a witnessScript (e.g. expanded
+  from a partially signed transaction) and a different one is passed, it
+  throws `Inconsistent witnessScript` (UTXO-1, library part).
+- `TransactionBuilder.sign` also refuses a `redeemScript`/`witnessScript` that an
+  already-expanded input does not carry (e.g. a witnessScript for a legacy
+  P2SH input, or a redeemScript for a bare P2WSH input), instead of silently
+  ignoring it, and refuses a `witnessValue` that differs from the value already
+  recorded for the input.
+  This check is one-way: it only catches a script the caller passes that the
+  input lacks. It does not catch an input that carries a P2SH wrapper the
+  caller did not pass: a P2SH-P2WSH input signed with only a `witnessScript`
+  (the caller expecting native P2WSH) is still accepted, because the BIP143
+  sighash does not commit to the wrapper. Callers that care which output type
+  they spend must compare each input's prevout scriptPubKey or address with
+  the one they derived themselves.
+- The value passed to `sign()` is always recorded on the input, so the
+  absurd-fee check sees real input values; the check no longer truncates values
+  with `>>> 0` (anything >= 2^32 sat was reduced modulo 2^32) and treats unknown
+  input values as a lower bound instead of zero-filling a negative fee (UTXO-7).
+  It remains a last-resort backstop: callers must still compute and display the
+  fee themselves.
+- Raised the optional `secp256k1` floor to `^3.8.1` (CVE-2024-48930, DEP-11).
+  The lockfile is refreshed to match, so `npm ci` installs secp256k1 3.8.1.
+
 # 3.2.0
 __added__
 - Added `address.fromBech32/toBech32` (#846)

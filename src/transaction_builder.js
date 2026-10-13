@@ -781,17 +781,41 @@ TransactionBuilder.prototype.sign = function (vin, keyPair, redeemScript, hashTy
     throw new Error('Inconsistent redeemScript')
   }
 
-  var kpPubKey = keyPair.publicKey || keyPair.getPublicKeyBuffer()
-  if (!canSign(input)) {
-    if (witnessValue !== undefined) {
-      if (input.value !== undefined && input.value !== witnessValue) throw new Error('Input didn\'t match witnessValue')
-      typeforce(types.Satoshi, witnessValue)
-      input.value = witnessValue
-    }
+  // if witnessScript was previously provided (or expanded from an existing
+  // witness), enforce consistency exactly like the redeemScript above. Without
+  // this, a partially signed input carrying a foreign witnessScript is signed
+  // with the caller's key while the caller's own witnessScript is ignored.
+  if (input.witnessScript !== undefined &&
+      witnessScript &&
+      !input.witnessScript.equals(witnessScript)) {
+    throw new Error('Inconsistent witnessScript')
+  }
 
+  // Record the input value whenever the caller supplies it, so the value used
+  // for the sighash and the value used by the absurd-fee check always agree.
+  if (witnessValue !== undefined) {
+    typeforce(types.Satoshi, witnessValue)
+    if (input.value !== undefined && input.value !== witnessValue) throw new Error('Input didn\'t match witnessValue')
+    input.value = witnessValue
+  }
+
+  var kpPubKey = keyPair.publicKey || keyPair.getPublicKeyBuffer()
+  if (canSign(input)) {
+    // The input is already fully described (expanded from an existing scriptSig
+    // or witness, or prepared by an earlier sign call), so prepareInput will not
+    // run and a script passed by the caller would be silently ignored. A script
+    // the input does not commit to means the caller expects a different input
+    // type (e.g. P2WSH where the input is P2SH, or the reverse): refuse.
+    // One-way only: an input carrying a P2SH wrapper the caller did not pass
+    // (P2SH-P2WSH signed with just a witnessScript) is not caught here, since
+    // the BIP143 sighash does not commit to the wrapper. Callers must compare
+    // the prevout scriptPubKey themselves.
+    if (redeemScript && input.redeemScript === undefined) throw new Error('Inconsistent redeemScript')
+    if (witnessScript && input.witnessScript === undefined) throw new Error('Inconsistent witnessScript')
+  } else {
     debug('Preparing input %d for signing', vin)
 
-    if (!canSign(input)) prepareInput(input, kpPubKey, redeemScript, witnessValue, witnessScript)
+    prepareInput(input, kpPubKey, redeemScript, witnessValue, witnessScript)
     if (!canSign(input)) throw Error(input.prevOutType + ' not supported')
   }
 
@@ -830,9 +854,9 @@ TransactionBuilder.prototype.sign = function (vin, keyPair, redeemScript, hashTy
     if (Buffer.isBuffer(signature)) signature = ECSignature.fromRSBuffer(signature)
 
     debug('Produced signature (r: %s, s: %s)', signature.r, signature.s)
-    
+
     input.signatures[i] = signature.toScriptSignature(hashType)
-    
+
     return true
   })
 
@@ -883,13 +907,22 @@ TransactionBuilder.prototype.__canModifyOutputs = function () {
 }
 
 TransactionBuilder.prototype.__overMaximumFees = function (bytes) {
-  // not all inputs will have .value defined
-  var incoming = this.inputs.reduce(function (a, x) { return a + (x.value >>> 0) }, 0)
+  // Not all inputs will have .value defined (a builder rebuilt with
+  // fromTransaction only knows the values later passed to sign()). Unknown
+  // values are >= 0, so the sum of the known values is a lower bound of the
+  // real input total and `knownIncoming - outgoing` is a lower bound of the
+  // fee: the check can under-report but never fire falsely.
+  // Values are summed as plain numbers (types.Satoshi keeps them < 2^53); the
+  // previous `x.value >>> 0` truncated anything >= 2^32 sat (~42.9 BTC).
+  var incoming = this.inputs.reduce(function (a, x) {
+    return (typeof x.value === 'number' && isFinite(x.value) && x.value > 0) ? a + x.value : a
+  }, 0)
 
   // but all outputs do, and if we have any input value
   // we can immediately determine if the outputs are too small
   var outgoing = this.tx.outs.reduce(function (a, x) { return a + x.value }, 0)
   var fee = incoming - outgoing
+  if (!(fee > 0)) return false
   var feeRate = fee / bytes
 
   return feeRate > this.maximumFeeRate

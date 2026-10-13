@@ -143,6 +143,29 @@ npm test
 npm run-script coverage
 ```
 
+### Known failing tests (publishing is blocked until they are fixed)
+
+`npm run unit` does not pass on the current tree: 39 tests fail (as of
+1.0.6). They are inherited fixtures that no longer match this fork's network
+list and behaviour:
+
+- 24 `ECPair` (`fromWIF`, `getAddress`, `getNetwork`) and 12 `HDNode`
+  (`fromBase58`/`toBase58`, identifier/fingerprint) fixtures: WIF/xpub version
+  bytes that now resolve to a different network, or are rejected with
+  `Invalid network version`;
+- `HDNode fromSeed* throws on too high entropy seed`: the expected exception
+  is no longer thrown;
+- `TransactionBuilder multisig: Zcash Sapling P2SH 2-of-3`: the signature
+  fixture differs;
+- `types Satoshi returns false for 2100000100000000`: an amount above the
+  21M BTC cap is accepted.
+
+Some of these touch key parsing and amount limits, so they are not skipped.
+The npm publish workflow (`.github/workflows/publish.yml`) runs the full unit
+suite and therefore fails until every one of them is fixed (or the fixture is
+corrected after a review that shows the new behaviour is intended). Do not
+exclude tests to get a release out.
+
 ## Complementing Libraries
 - [BIP21](https://github.com/bitcoinjs/bip21) - A BIP21 compatible URL encoding utility library
 - [BIP38](https://github.com/bitcoinjs/bip38) - Passphrase-protected private keys

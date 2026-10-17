@@ -1577,6 +1577,7 @@
       }, {
         "description": "Zcash Sapling P2SH 2-of-3 multisig, signed by key 3 and 1",
         "network": "zcashTest",
+        "consensusBranchId": { "4": "0x76b809bb" },
         "version": 4,
         "versionGroupId": "0x892F2085",
         "expiryHeight": 289507,

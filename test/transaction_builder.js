@@ -15,8 +15,32 @@ var NETWORKS = require('../src/networks')
 
 var fixtures = require('./fixtures/transaction_builder')
 
-function construct (f, dontSign) {
+// A Zcash vector is signed under the consensus branch id of its network
+// upgrade, and src/networks.js tracks the current upgrade. A fixture made
+// under an earlier upgrade pins its branch id with `consensusBranchId`
+// ({ txVersion: '0x...' }) so it keeps checking the signature hash it was
+// created with. The network copy is cached so one fixture always gets the
+// same network object.
+var pinnedNetworks = []
+function fixtureNetwork (f) {
   var network = NETWORKS[f.network]
+  if (!f.consensusBranchId) return network
+
+  for (var i = 0; i < pinnedNetworks.length; i++) {
+    if (pinnedNetworks[i].f === f) return pinnedNetworks[i].network
+  }
+
+  var pinned = Object.assign({}, network)
+  pinned.consensusBranchId = Object.assign({}, network.consensusBranchId)
+  Object.keys(f.consensusBranchId).forEach(function (txVersion) {
+    pinned.consensusBranchId[txVersion] = parseInt(f.consensusBranchId[txVersion], 16)
+  })
+  pinnedNetworks.push({ f: f, network: pinned })
+  return pinned
+}
+
+function construct (f, dontSign) {
+  var network = fixtureNetwork(f)
   var txb = new TransactionBuilder(network)
 
   if (f.version !== undefined) txb.setVersion(f.version)
@@ -506,7 +530,7 @@ describe('TransactionBuilder', function () {
       it(f.description, function () {
         var txb = construct(f, true)
         var tx
-        var network = NETWORKS[f.network]
+        var network = fixtureNetwork(f)
 
         f.inputs.forEach(function (input, i) {
           var redeemScript

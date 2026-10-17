@@ -25,6 +25,30 @@ __security__ (SSP security review 2026-10)
 - Raised the optional `secp256k1` floor to `^3.8.1` (CVE-2024-48930, DEP-11).
   The lockfile is refreshed to match, so `npm ci` installs secp256k1 3.8.1.
 
+__fixed__
+- `HDNode.fromBase58(string, [networks])` matches the list again. Since the
+  GRS change it used only the first entry, so an extended key for any other
+  listed network threw `Invalid network version`. Each distinct checksum hash
+  in the list is tried in order, and the first network whose version bytes
+  and checksum hash match is used. A list whose first entry matches resolves
+  to that entry exactly as before; a key that matches no entry now throws
+  `Unknown network version` (as upstream) instead of `Invalid network version`.
+  A single network object (how SSP and ZelCore call it) is unchanged.
+
+__tests/fixtures__ (the full unit suite passes and gates publishing)
+- `ECPair` list tests use upstream's unambiguous network list. `fromWIF` with a
+  list picks by WIF version byte alone, and many fork networks share one
+  (0x80, 0xef), so a list of every network resolves by list order; a new test
+  covers that case. No `src` change.
+- `HDNode.fromSeed*`: tests assert the fork's 2048-bit seed maximum (raised
+  from BIP32's 512 bits in 8a8e24c). No `src` change.
+- `types.Satoshi`: tests assert the fork's limit, which is UInt53 since
+  `SATOSHI_MAX` was raised above 2^53 for larger-supply coins (7c492ec); 21M BTC
+  is no longer a cap. No `src` change.
+- Zcash Sapling P2SH 2-of-3 multisig vector: pins the Sapling consensus branch
+  id (0x76b809bb) it was signed under; the original signatures verify
+  unchanged. `zcashTest` itself keeps the current (NU6.3) branch id.
+
 # 3.2.0
 __added__
 - Added `address.fromBech32/toBech32` (#846)

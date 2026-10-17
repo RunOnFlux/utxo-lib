@@ -63,16 +63,12 @@ jobs:
       # pure-JS elliptic implementation, which is what browsers and React
       # Native (the wallet and Key) run anyway.
       - run: npm ci --ignore-scripts
-      # Full unit suite (mocha), deliberately with no exclusions.
-      # IT DOES NOT PASS ON THE CURRENT TREE: 39 inherited tests fail as of
-      # 1.0.6 (ECPair/HDNode network fixtures, the HDNode high-entropy seed
-      # check, one Zcash Sapling multisig fixture, and types.Satoshi accepting
-      # an amount above 21M BTC; list in README "Known failing tests").
-      # Some of them cover key parsing and amount limits, so they are not
-      # skipped: publishing stays blocked until they are fixed or each fixture
-      # is corrected after review. Do not add exclusions to get a release out.
-      # `npm test` additionally runs `standard`, which does not pass either;
-      # switch to `npm test` once it does.
+      # Full unit suite (mocha), deliberately with no exclusions: any failing
+      # test blocks publishing. The 39 inherited failures were resolved in
+      # 1.0.6 (README "Unit tests gate publishing"). Do not add exclusions to
+      # get a release out.
+      # `npm test` additionally runs `standard`, which still reports
+      # pre-existing style errors; switch to `npm test` once it passes.
       - name: Unit tests (full suite; blocks publishing while any test fails)
         run: npm run unit
 

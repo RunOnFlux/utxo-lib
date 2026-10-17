@@ -103,10 +103,24 @@ describe('HDNode', function () {
       }, /Seed should be at least 128 bits/)
     })
 
+    // This fork raised BIP32's 512-bit seed maximum to 2048 bits (8a8e24c,
+    // "extend maximum allowed seed length"); HMAC-SHA512 takes any length.
+    it('accepts a seed longer than 512 bits', function () {
+      var hd = HDNode.fromSeedHex('ff'.repeat(72))
+
+      assert.strictEqual(hd.depth, 0)
+    })
+
+    it('accepts a 2048-bit seed', function () {
+      var hd = HDNode.fromSeedHex('ff'.repeat(256))
+
+      assert.strictEqual(hd.depth, 0)
+    })
+
     it('throws on too high entropy seed', function () {
       assert.throws(function () {
-        HDNode.fromSeedHex('ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')
-      }, /Seed should be at most 512 bits/)
+        HDNode.fromSeedHex('ff'.repeat(257))
+      }, /Seed should be at most 2048 bits/)
     })
   })
 
@@ -200,6 +214,34 @@ describe('HDNode', function () {
           HDNode.fromBase58(f.string, networks)
         }, new RegExp(f.exception))
       })
+    })
+
+    validAll.forEach(function (f) {
+      it('resolves ' + f.base58 + ' to its network from a list', function () {
+        var hd = HDNode.fromBase58(f.base58, NETWORKS_LIST)
+
+        assert.strictEqual(hd.keyPair.network, NETWORKS[f.network])
+      })
+    })
+
+    it('resolves a list to the first network with matching version bytes', function () {
+      // zcash shares bitcoin's xpub version bytes
+      var xpub = fixtures.valid[0].master.base58
+
+      assert.strictEqual(HDNode.fromBase58(xpub, [NETWORKS.zcash, NETWORKS.bitcoin]).keyPair.network, NETWORKS.zcash)
+      assert.strictEqual(HDNode.fromBase58(xpub, [NETWORKS.bitcoin, NETWORKS.zcash]).keyPair.network, NETWORKS.bitcoin)
+    })
+
+    it('decodes a list entry whose checksum uses another hash (groestl)', function () {
+      // groestlcoin shares bitcoin's version bytes; only the checksum differs
+      var xpub = HDNode.fromSeedHex('000102030405060708090a0b0c0d0e0f', NETWORKS.groestlcoin).neutered().toBase58()
+      var hd = HDNode.fromBase58(xpub, [NETWORKS.bitcoin, NETWORKS.groestlcoin])
+
+      assert.strictEqual(hd.keyPair.network, NETWORKS.groestlcoin)
+      assert.strictEqual(hd.toBase58(), xpub)
+      assert.throws(function () {
+        HDNode.fromBase58(xpub, [NETWORKS.bitcoin])
+      }, /Invalid checksum/)
     })
   })
 

@@ -143,6 +143,30 @@ npm test
 npm run-script coverage
 ```
 
+### Unit tests gate publishing
+
+`npm run unit` passes on the current tree with no exclusions, and the npm
+publish workflow (`.github/workflows/publish.yml`) runs it before every
+release, so any failing test blocks publishing. Do not skip or exclude tests
+to get a release out.
+
+Up to 1.0.5, 39 inherited tests failed. They were resolved in 1.0.6 (details
+in the CHANGELOG):
+
+- `HDNode.fromBase58` with a list of networks only ever used the first entry
+  (a GRS-support change); list matching is restored in `src/hdnode.js`.
+- `ECPair` list tests used every fork network, many of which share a WIF
+  version byte; they use upstream's unambiguous list, and the ambiguous case
+  has its own test.
+- The seed maximum (2048 bits, not BIP32's 512) and the `Satoshi` limit
+  (UInt53, not 21M BTC) are deliberate fork changes; the tests assert those
+  bounds.
+- The Zcash Sapling multisig vector pins the Sapling branch id it was signed
+  under instead of following the current network upgrade.
+
+`npm test` also runs `standard`, which still reports pre-existing style
+errors (mostly `src/networks.js`).
+
 ## Complementing Libraries
 - [BIP21](https://github.com/bitcoinjs/bip21) - A BIP21 compatible URL encoding utility library
 - [BIP38](https://github.com/bitcoinjs/bip38) - Passphrase-protected private keys

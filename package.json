@@ -1,6 +1,6 @@
 {
   "name": "@runonflux/utxo-lib",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Client-side Bitcoin JavaScript library",
   "main": "./src/index.js",
   "engines": {
@@ -30,7 +30,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/runonflux/utxo-lib.git"
+    "url": "git+https://github.com/RunOnFlux/utxo-lib.git"
   },
   "files": [
     "src"
@@ -69,12 +69,12 @@
   },
   "license": "MIT",
   "optionalDependencies": {
-    "secp256k1": "^3.5.2"
+    "secp256k1": "^3.8.1"
   },
   "bugs": {
-    "url": "https://github.com/runonflux/utxo-lib/issues"
+    "url": "https://github.com/RunOnFlux/utxo-lib/issues"
   },
-  "homepage": "https://github.com/runonflux/utxo-lib#readme",
+  "homepage": "https://github.com/RunOnFlux/utxo-lib#readme",
   "directories": {
     "test": "test"
   },

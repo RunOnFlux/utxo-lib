@@ -1,5 +1,4 @@
 var Buffer = require('safe-buffer').Buffer
-var base58check = require('bs58check')
 var bcrypto = require('./crypto')
 var createHmac = require('create-hmac')
 var typeforce = require('typeforce')
@@ -58,30 +57,56 @@ HDNode.fromSeedHex = function (hex, network) {
 }
 
 HDNode.fromBase58 = function (string, networks) {
-  if (Array.isArray(networks)) {
-    networks = networks[0] || NETWORKS.bitcoin
-  } else {
-    networks = networks || NETWORKS.bitcoin
-  }
-  var buffer = bs58checkBase(networks.hashFunctions.address).decode(string)
-  if (buffer.length !== 78) throw new Error('Invalid buffer length')
-
-  // 4 bytes: version bytes
-  var version = buffer.readUInt32BE(0)
+  var buffer
+  var version
   var network
 
   // list of networks?
   if (Array.isArray(networks)) {
+    // An empty list keeps the historical default of bitcoin.
+    if (networks.length === 0) networks = [NETWORKS.bitcoin]
+
+    // The base58check checksum hash is per network (groestl for GRS), so the
+    // string is decoded with each distinct hash function, in list order,
+    // until one verifies. If none does, the first error is reported.
+    var tried = []
+    var decodedWith
+    var firstError
+    for (var i = 0; i < networks.length && !buffer; i++) {
+      var hashFunction = networks[i].hashFunctions.address
+      if (tried.indexOf(hashFunction) !== -1) continue
+      tried.push(hashFunction)
+      try {
+        buffer = bs58checkBase(hashFunction).decode(string)
+        decodedWith = hashFunction
+      } catch (e) {
+        if (!firstError) firstError = e
+      }
+    }
+    if (!buffer) throw firstError
+    if (buffer.length !== 78) throw new Error('Invalid buffer length')
+
+    // 4 bytes: version bytes
+    version = buffer.readUInt32BE(0)
+
+    // The first listed network with matching version bytes and checksum hash.
+    // Many fork networks share bitcoin's version bytes, so list order decides;
+    // a list whose first entry matches resolves to that entry.
     network = networks.filter(function (x) {
-      return version === x.bip32.private ||
-             version === x.bip32.public
-    }).pop()
+      return x.hashFunctions.address === decodedWith &&
+        (version === x.bip32.private || version === x.bip32.public)
+    })[0]
 
     if (!network) throw new Error('Unknown network version')
 
   // otherwise, assume a network object (or default to bitcoin)
   } else {
     network = networks || NETWORKS.bitcoin
+    buffer = bs58checkBase(network.hashFunctions.address).decode(string)
+    if (buffer.length !== 78) throw new Error('Invalid buffer length')
+
+    // 4 bytes: version bytes
+    version = buffer.readUInt32BE(0)
   }
 
   if (version !== network.bip32.private &&

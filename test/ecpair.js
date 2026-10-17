@@ -15,9 +15,15 @@ var fixtures = require('./fixtures/ecpair.json')
 var curve = ecdsa.__curve
 
 var NETWORKS = require('../src/networks')
-var NETWORKS_LIST = [] // Object.values(NETWORKS)
+// fromWIF picks a network from a list by the WIF version byte alone, and many
+// of this fork's networks share one (0x80: bitcoin, zcash, flux, ...; 0xef:
+// testnet, zcashTest, ...), so a list of every network is ambiguous and the
+// pick depends on list order. The list-based tests use upstream's list, whose
+// version bytes are unique; the ambiguous case has its own test below.
+var NETWORKS_LIST = [NETWORKS.bitcoin, NETWORKS.testnet, NETWORKS.litecoin]
+var ALL_NETWORKS = [] // Object.values(NETWORKS)
 for (var networkName in NETWORKS) {
-  NETWORKS_LIST.push(NETWORKS[networkName])
+  ALL_NETWORKS.push(NETWORKS[networkName])
 }
 
 describe('ECPair', function () {
@@ -127,6 +133,18 @@ describe('ECPair', function () {
         assert.strictEqual(keyPair.d.toString(), f.d)
         assert.strictEqual(keyPair.compressed, f.compressed)
         assert.strictEqual(keyPair.network, NETWORKS[f.network])
+      })
+    })
+
+    fixtures.valid.forEach(function (f) {
+      it('imports ' + f.WIF + ' (via an ambiguous list of every network)', function () {
+        var keyPair = ECPair.fromWIF(f.WIF, ALL_NETWORKS)
+
+        assert.strictEqual(keyPair.d.toString(), f.d)
+        assert.strictEqual(keyPair.compressed, f.compressed)
+        // some network with this version byte, not necessarily f.network
+        assert.strictEqual(keyPair.network.wif, NETWORKS[f.network].wif)
+        assert.notStrictEqual(ALL_NETWORKS.indexOf(keyPair.network), -1)
       })
     })
 

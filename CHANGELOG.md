@@ -1,3 +1,29 @@
+# @runonflux/utxo-lib 1.1.0
+__added__ (Zcash NU7)
+- Zcash v5 transactions (ZIP 225 encoding, ZIP 244 txid and signature digests),
+  in the new `src/zcash_v5.js`. NU7 activated on mainnet at block 3,543,405 on
+  2026-11-05 and made v4 transactions invalid (ZIP 2003), so ZEC spends must
+  now be built with `txb.setVersion(5)` (version group id `0x26A7270A`).
+  - Parsing and serializing v5 is byte-exact, including Sapling and Orchard
+    bundles, and `getId()` returns the ZIP 244 txid. Signing covers
+    transparent inputs only; `TransactionBuilder.fromTransaction` refuses a v5
+    transaction that carries shielded components.
+  - v5 signatures commit to the value and scriptPubKey of EVERY input, so call
+    `txb.setPrevouts([{ value, script }])` (or `tx.setZip244Prevouts(...)`
+    before `tx.hashForZcashSignature`) with one entry per input, in order.
+    `script` is the spent coin's scriptPubKey (for P2SH, the P2SH output
+    script). `sign()` refuses a value or a P2SH script that disagrees with it.
+  - Only `SIGHASH_ALL`/`NONE`/`SINGLE` (optionally with `ANYONECANPAY`) are
+    accepted, as ZIP 244 requires.
+  - Verified against all 10 official ZIP 244 vectors from zcash-test-vectors
+    (txid, re-serialization and every signature hash type).
+
+__changed__
+- `networks.zcash` / `zcashTest`: consensus branch id `0x77190ad9` (NU7) for v5,
+  and for v4 so existing v4 transactions still parse. Flux and the other
+  Zcash-derived networks keep v4 and are unchanged.
+- `BufferWriter.writeUInt8`.
+
 # @runonflux/utxo-lib 1.0.6
 __security__ (SSP security review 2026-10)
 - `TransactionBuilder.sign` enforces `witnessScript` consistency exactly like

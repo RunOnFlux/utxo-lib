@@ -15,6 +15,10 @@ BufferWriter.prototype.writeSlice = function (slice) {
   this.offset += slice.copy(this.buffer, this.offset)
 }
 
+BufferWriter.prototype.writeUInt8 = function (input) {
+  this.offset = this.buffer.writeUInt8(input, this.offset)
+}
+
 BufferWriter.prototype.writeInt32 = function (input) {
   this.offset = this.buffer.writeInt32LE(input, this.offset)
 }

@@ -118,10 +118,13 @@ module.exports = {
       1: 0x00,
       2: 0x00,
       3: 0x5ba81b19,
-      // NU6.3 — activated on mainnet at block 3,428,143 (28 July 2026).
-      // Transactions signed with the previous NU6.2 id (0x5437f330) are
-      // rejected by the network since activation.
-      4: 0x37a5165b
+      // NU7 — activated on mainnet at block 3,543,405 (5 November 2026).
+      // NU7 also made v4 transactions invalid (ZIP 2003): ZEC spends must be
+      // v5 (ZIP 225 / ZIP 244, see zcash_v5.js). The v4 entry is kept only so
+      // older v4 transactions can still be parsed.
+      // Previous ids: NU6.3 0x37a5165b (block 3,428,143), NU6.2 0x5437f330.
+      4: 0x77190ad9,
+      5: 0x77190ad9
     },
     coin: coins.ZEC,
     hashFunctions: hashFunctions
@@ -139,8 +142,9 @@ module.exports = {
       1: 0x00,
       2: 0x00,
       3: 0x5ba81b19,
-      // NU6.3 (testnet activates network upgrades ahead of mainnet)
-      4: 0x37a5165b
+      // NU7 (testnet block 4,465,026); v4 is invalid from NU7 on, use v5
+      4: 0x77190ad9,
+      5: 0x77190ad9
     },
     coin: coins.ZEC,
     hashFunctions: hashFunctions

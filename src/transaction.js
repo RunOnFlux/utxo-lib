@@ -10,6 +10,7 @@ var typeforce = require('typeforce')
 var types = require('./types')
 var varuint = require('varuint-bitcoin')
 var blake2b = require('blake2b')
+var zcashV5 = require('./zcash_v5')
 
 function varSliceSize (someScript) {
   var length = someScript.length
@@ -48,6 +49,11 @@ function Transaction (network = networks.bitcoin) {
     this.vShieldedSpend = []
     this.vShieldedOutput = []
     this.bindingSig = 0
+    // ZCash version >= 5 (ZIP 225): the branch id is part of the transaction,
+    // and the shielded bundles have their own layout (see zcash_v5.js)
+    this.consensusBranchId = 0
+    this.sapling = zcashV5.emptySapling()
+    this.orchard = zcashV5.emptyOrchard()
   }
 }
 
@@ -74,6 +80,8 @@ var BLANK_OUTPUT = {
 
 Transaction.ZCASH_OVERWINTER_VERSION = 3
 Transaction.ZCASH_SAPLING_VERSION = 4
+Transaction.ZCASH_NU5_VERSION = zcashV5.VERSION
+Transaction.ZCASH_NU5_VERSION_GROUP_ID = zcashV5.VERSION_GROUP_ID
 Transaction.ZCASH_JOINSPLITS_SUPPORT_VERSION = 2
 Transaction.ZCASH_NUM_JOINSPLITS_INPUTS = 2
 Transaction.ZCASH_NUM_JOINSPLITS_OUTPUTS = 2
@@ -259,6 +267,23 @@ Transaction.fromBuffer = function (buffer, network = networks.bitcoin, __noStric
     if (!network.consensusBranchId.hasOwnProperty(tx.version)) {
       throw new Error('Unsupported Zcash transaction')
     }
+    if (tx.version >= Transaction.ZCASH_NU5_VERSION) {
+      if (tx.version !== Transaction.ZCASH_NU5_VERSION || !tx.overwintered) {
+        throw new Error('Unsupported Zcash transaction')
+      }
+      zcashV5.readBody(tx, {
+        readSlice: readSlice,
+        readUInt8: readUInt8,
+        readUInt32: readUInt32,
+        readUInt64: readUInt64,
+        readVarInt: readVarInt,
+        readVarSlice: readVarSlice
+      })
+      tx.network = network
+      if (__noStrict) return tx
+      if (offset !== buffer.length) throw new Error('Transaction has unexpected data')
+      return tx
+    }
   }
 
   var marker = buffer.readUInt8(offset)
@@ -363,6 +388,10 @@ Transaction.isCoinbaseHash = function (buffer) {
 
 Transaction.prototype.isSaplingCompatible = function () {
   return coins.isZcash(this.network) && this.version >= Transaction.ZCASH_SAPLING_VERSION
+}
+
+Transaction.prototype.isZcashV5 = function () {
+  return coins.isZcash(this.network) && this.version >= Transaction.ZCASH_NU5_VERSION
 }
 
 Transaction.prototype.isOverwinterCompatible = function () {
@@ -513,6 +542,9 @@ Transaction.prototype.zcashTransactionByteLength = function () {
 Transaction.prototype.__byteLength = function (__allowWitness) {
   var hasWitnesses = __allowWitness && this.hasWitnesses()
 
+  if (this.isZcashV5()) {
+    return zcashV5.byteLength(this)
+  }
   if (coins.isZcash(this.network)) {
     return this.zcashTransactionByteLength()
   }
@@ -537,6 +569,9 @@ Transaction.prototype.clone = function () {
     newTx.overwintered = this.overwintered
     newTx.versionGroupId = this.versionGroupId
     newTx.expiryHeight = this.expiryHeight
+  }
+  if (this.isZcashV5()) {
+    zcashV5.cloneInto(this, newTx)
   }
   if (this.isSaplingCompatible()) {
     newTx.valueBalance = this.valueBalance
@@ -710,6 +745,29 @@ Transaction.prototype.getBlake2bHash = function (bufferToHash, personalization) 
  */
 Transaction.prototype.invalidateHashCache = function () {
   this.__sighashCache = null
+  this.__zip244Cache = null
+}
+
+/**
+ * Zcash v5 (ZIP 244) signatures commit to the value and scriptPubKey of the
+ * coin spent by EVERY transparent input, not only the input being signed.
+ * Supply them here, in input order, before computing any v5 signature hash.
+ * `script` is the coin's scriptPubKey (for P2SH: the P2SH output script, not
+ * the redeemScript).
+ * @param {Array<{value: number, script: Buffer}>} prevouts
+ */
+Transaction.prototype.setZip244Prevouts = function (prevouts) {
+  if (!this.isZcashV5()) {
+    throw new Error('setZip244Prevouts is only for Zcash v5 transactions')
+  }
+  typeforce(types.arrayOf({ value: types.Satoshi, script: types.Buffer }), prevouts)
+  if (prevouts.length !== this.ins.length) {
+    throw new Error('Expected ' + this.ins.length + ' prevouts, got ' + prevouts.length)
+  }
+  this.__zip244Prevouts = prevouts.map(function (p) {
+    return { value: p.value, script: Buffer.from(p.script) }
+  })
+  this.invalidateHashCache()
 }
 
 /**
@@ -843,6 +901,19 @@ Transaction.prototype.hashForZcashSignature = function (inIndex, prevOutScript, 
   typeforce(types.tuple(types.UInt32, types.Buffer, types.Satoshi, types.UInt32), arguments)
   if (!coins.isZcash(this.network)) {
     throw new Error('hashForZcashSignature can only be called when using Zcash network')
+  }
+  if (this.isZcashV5()) {
+    // ZIP 244: `prevOutScript` (the v4 scriptCode) is not used; the digest
+    // commits to the spent coin's scriptPubKey from setZip244Prevouts.
+    var prevouts = this.__zip244Prevouts
+    if (!prevouts) {
+      throw new Error('Zcash v5 signing needs the value and scriptPubKey of every input (setZip244Prevouts)')
+    }
+    if (inIndex >= this.ins.length) throw new Error('Input index is out of range')
+    if (prevouts[inIndex].value !== value) {
+      throw new Error('Input value does not match the prevouts given for input ' + inIndex)
+    }
+    return zcashV5.signatureDigest(this, inIndex, hashType, prevouts)
   }
   if (this.joinsplits.length > 0) {
     throw new Error('Hash signature for Zcash protected transactions is not supported')
@@ -1020,6 +1091,10 @@ Transaction.prototype.hashForBTHSignature = function (inIndex, prevOutScript, in
 }
 
 Transaction.prototype.getHash = function () {
+  if (this.isZcashV5()) {
+    // ZIP 244: the v5 txid is a BLAKE2b tree digest, not sha256d of the bytes
+    return zcashV5.txidDigest(this)
+  }
   return this.network.hashFunctions.transaction(this.__toBuffer(undefined, undefined, false))
 }
 
@@ -1033,6 +1108,14 @@ Transaction.prototype.toBuffer = function (buffer, initialOffset) {
 }
 
 Transaction.prototype.__toBuffer = function (buffer, initialOffset, __allowWitness) {
+  if (this.isZcashV5()) {
+    var v5Writer = new BufferWriter(zcashV5.byteLength(this))
+    zcashV5.writeTx(this, v5Writer)
+    var v5Bytes = v5Writer.getBuffer()
+    if (!buffer) return v5Bytes
+    v5Bytes.copy(buffer, initialOffset || 0)
+    return buffer.slice(initialOffset || 0, (initialOffset || 0) + v5Bytes.length)
+  }
   if (!buffer) buffer = Buffer.allocUnsafe(this.__byteLength(__allowWitness))
 
   var offset = initialOffset || 0

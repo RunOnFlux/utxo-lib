@@ -15,6 +15,7 @@ var P2SH = SIGNABLE.concat([btemplates.types.P2WPKH, btemplates.types.P2WSH])
 var ECPair = require('./ecpair')
 var ECSignature = require('./ecsignature')
 var Transaction = require('./transaction')
+var zcashV5 = require('./zcash_v5')
 
 var debug = require('debug')('bitgo:utxolib:txbuilder')
 
@@ -525,9 +526,44 @@ TransactionBuilder.prototype.setVersion = function (version, overwinter = true) 
     if (!this.network.consensusBranchId.hasOwnProperty(this.tx.version)) {
       throw new Error('Unsupported Zcash transaction')
     }
+    if (version >= Transaction.ZCASH_NU5_VERSION) {
+      if (version !== Transaction.ZCASH_NU5_VERSION || !overwinter ||
+          !this.network.consensusBranchId.hasOwnProperty(version)) {
+        throw new Error('Unsupported Zcash transaction')
+      }
+      if (this.inputs.some(function (input) {
+        return input.signatures && input.signatures.some(function (s) { return s })
+      })) {
+        throw new Error('No, this would invalidate signatures')
+      }
+      // v5 carries the consensus branch id in the transaction itself
+      this.tx.consensusBranchId = this.network.consensusBranchId[version]
+      this.tx.versionGroupId = Transaction.ZCASH_NU5_VERSION_GROUP_ID
+    }
     this.tx.overwintered = (overwinter ? 1 : 0)
   }
   this.tx.version = version
+}
+
+/**
+ * Zcash v5: override the consensus branch id written into the transaction
+ * (setVersion(5) uses the network's current one).
+ */
+TransactionBuilder.prototype.setConsensusBranchId = function (consensusBranchId) {
+  if (!this.tx.isZcashV5()) {
+    throw new Error('consensusBranchId can only be set for Zcash v5 transactions')
+  }
+  typeforce(types.UInt32, consensusBranchId)
+  this.tx.consensusBranchId = consensusBranchId
+}
+
+/**
+ * Zcash v5: value and scriptPubKey of the coin spent by every input, in input
+ * order. Required before signing, since ZIP 244 commits to all of them.
+ * @param {Array<{value: number, script: Buffer}>} prevouts
+ */
+TransactionBuilder.prototype.setPrevouts = function (prevouts) {
+  this.tx.setZip244Prevouts(prevouts)
 }
 
 TransactionBuilder.prototype.setVersionGroupId = function (versionGroupId) {
@@ -593,6 +629,14 @@ TransactionBuilder.fromTransaction = function (transaction, network) {
     if (txb.tx.isOverwinterCompatible()) {
       txb.setVersionGroupId(transaction.versionGroupId)
       txb.setExpiryHeight(transaction.expiryHeight)
+    }
+    if (txb.tx.isZcashV5()) {
+      // The builder only signs transparent inputs; a v5 transaction with
+      // Sapling or Orchard components would lose them here.
+      if (zcashV5.hasShielded(transaction)) {
+        throw new Error('Zcash v5 transactions with shielded components are not supported')
+      }
+      txb.setConsensusBranchId(transaction.consensusBranchId)
     }
     // We don't support protected transactions but we copy the joinsplits for consistency. However, the transaction
     // builder will fail when we try to sign one of these transactions
@@ -817,6 +861,21 @@ TransactionBuilder.prototype.sign = function (vin, keyPair, redeemScript, hashTy
 
     prepareInput(input, kpPubKey, redeemScript, witnessValue, witnessScript)
     if (!canSign(input)) throw Error(input.prevOutType + ' not supported')
+  }
+
+  if (this.tx.isZcashV5()) {
+    // ZIP 244 commits to the spent coin's scriptPubKey and value: make sure the
+    // prevouts given to setPrevouts describe the coin this input really spends.
+    var prevouts = this.tx.__zip244Prevouts
+    if (!prevouts) {
+      throw new Error('Zcash v5 signing needs the value and scriptPubKey of every input (setPrevouts)')
+    }
+    if (witnessValue === undefined || prevouts[vin].value !== witnessValue) {
+      throw new Error('Input value does not match the prevouts given for input ' + vin)
+    }
+    if (!input.prevOutScript || !input.prevOutScript.equals(prevouts[vin].script)) {
+      throw new Error('Input script does not match the prevouts given for input ' + vin)
+    }
   }
 
   // ready to sign
